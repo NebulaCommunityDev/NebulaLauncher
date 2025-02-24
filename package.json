@@ -1,26 +1,26 @@
 {
-    "name": "MiguelkiNetwork-MCLauncher",
-    "preductname": "Miguelki Network MC Launcher",
-    "version": "3.2.6",
+    "name": "Nebula-Community-Launcher",
+    "preductname": "Nebula Community Launcher",
+    "version": "1.0.0",
     "sub_version": "",
-    "changelog": "Se ha mejorado la interfaz de la consola y se ha actualizado la libreria de minecraft-java-core",
-    "description": "Launcher de minecraft para los servidores de Miguelki Network",
+    "changelog": "Esta versión puede contener errores, por favor, reportalos pulsando la tecla F12 y pulsando el botón de exclamación.",
+    "description": "Launcher de minecraft para los servidores de Nebula Community",
     "main": "src/app.js",
     "author": {
         "name": "Miguelki",
         "email": "admin@miguelkinetwork.fun",
         "url": "https://github.com/miguelkix30"
     },
-    "url": "http://node1.miguelkinetwork.info:25565/",
+    "url": "http://node1.miguelkinetwork.info:25574/",
     "store_url": "https://minecraft.miguelkinetwork.info/shop/",
     "azuriom_url": "https://minecraft.miguelkinetwork.info/",
-    "discord_server_id": "1300477405957329018",
-    "discord_url": "https://dsc.gg/miguelkinetwork",
+    "discord_server_id": "1268737449471905917",
+    "discord_url": "https://discord.gg/Bsd2PH3u4w",
     "scripts": {
         "start": "cross-env-shell NODE_ENV=dev electron .",
         "dev": "cross-env-shell DEV_TOOL=open nodemon --exec npm start",
         "build": "node build.js --obf=true --build=platform",
-        "icon": "node build.js --icon=https://github.com/miguelkix30/MiguelkiNetworkMCLauncher/master/src/assets/images/icon.png"
+        "icon": "node build.js --icon=https://github.com/NebulaCommunityDev/NebulaLauncher/master/src/assets/images/icon.png"
     },
     "license": "CCANC",
     "nodemonConfig": {
@@ -50,6 +50,6 @@
     },
     "repository": {
         "type": "git",
-        "url": "git+https://github.com/miguelkix30/MiguelkiNetworkMCLauncher.git"
+        "url": "git+https://github.com/NebulaCommunityDev/NebulaLauncher.git"
     }
 }

@@ -297,7 +297,7 @@ class Launcher {
         discorderrdialog.openDialog({
           title: "Verificación de Discord",
           content:
-            "Para poder acceder al launcher debes iniciar sesión con tu cuenta de Discord y estar en el servidor de Miguelki Network. <br><br>Quieres iniciar sesión ahora?",
+            "Para poder acceder al launcher debes iniciar sesión con tu cuenta de Discord y estar en el servidor de Nebula Commnunity. <br><br>Quieres iniciar sesión ahora?",
           options: true,
           callback: resolve,
         });
