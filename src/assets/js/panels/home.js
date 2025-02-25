@@ -326,7 +326,7 @@ class Home {
         let instanceSelectBTN = document.querySelector('.instance-select');
         let instanceCloseBTN = document.querySelector('.close-popup');
 
-        if (instancesList.length === 1) {
+        if (instancesList.length === 0) {
             instanceSelectBTN.style.display = 'none';
         }
 

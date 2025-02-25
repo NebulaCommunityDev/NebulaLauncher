@@ -1,7 +1,7 @@
 {
     "name": "Nebula-Community-Launcher",
     "preductname": "Nebula Community Launcher",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "sub_version": "",
     "changelog": "Esta versión puede contener errores, por favor, reportalos pulsando la tecla F12 y pulsando el botón de exclamación.",
     "description": "Launcher de minecraft para los servidores de Nebula Community",
