@@ -49,7 +49,7 @@ class Login {
         microsoftBtn.addEventListener("click", () => {
             popupLogin.openPopup({
                 title: 'Iniciar sesión',
-                content: 'Conectando...',
+                content: 'Por favor continua en la ventana de inicio de sesión de Microsoft......',
                 color: 'var(--color)'
             });
 
@@ -95,7 +95,7 @@ class Login {
 
             popupLogin.openPopup({
                 title: 'Iniciar sesión',
-                content: 'Conectando...',
+                content: 'Por favor continua en la ventana de inicio de sesión de Microsoft......',
                 color: 'var(--color)'
             });
 
@@ -179,7 +179,7 @@ class Login {
         loginMicrosoftAzauth.addEventListener('click', () => {
             PopupLogin.openPopup({
                 title: 'Iniciar sesión',
-                content: 'Conectando...',
+                content: 'Por favor continua en la ventana de inicio de sesión de Microsoft...',
                 color: 'var(--color)'
             });
 
