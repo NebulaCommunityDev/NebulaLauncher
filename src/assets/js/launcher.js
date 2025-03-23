@@ -8,6 +8,7 @@ import Home from "./panels/home.js";
 import Settings from "./panels/settings.js";
 import Mods from "./panels/mods.js";
 import Logger2 from "./loggerprod.js";
+import cleanupManager from './utils/cleanup-manager.js';
 
 import {
   logger,
@@ -28,20 +29,23 @@ import {
   setDiscordPFP,
   showTermsAndConditions,
   setBackgroundMusic,
-  setPerformanceMode
+  setPerformanceMode,
+  patchLoader
 } from "./utils.js";
 import {
   getHWID,
   loginMSG,
   quitAPP,
   verificationError,
-  sendClientReport
+  sendClientReport,
+  checkBaseVersion
 } from "./MKLib.js";
 const { AZauth, Microsoft, Mojang } = require("minecraft-java-core");
 
 const { ipcRenderer } = require("electron");
 const fs = require("fs");
 const os = require("os");
+const fetch = require("node-fetch");
 let dev = process.env.NODE_ENV === "dev";
 
 class Launcher {
@@ -50,6 +54,8 @@ class Launcher {
     else this.initWindow();
 
     console.log("Iniciando Launcher...");
+    
+    await checkBaseVersion();
     
     this.shortcut();
     this.db = new database();
@@ -105,6 +111,8 @@ class Launcher {
     } else {
       await this.startLauncher();
     }
+    
+    await cleanupManager.initialize();
   }
   
   startLoadingDisplayTimer() {
@@ -426,7 +434,55 @@ class Launcher {
           }
         });
         
+        // Mejora para validación del campo de descargas
+        const maxDownloadsInput = document.querySelector("#setup-max-downloads");
+        let isMaxDownloadsValid = true;
+        
+        const validateMaxDownloads = () => {
+          if (!maxDownloadsInput) return true;
+          
+          const value = parseInt(maxDownloadsInput.value);
+          isMaxDownloadsValid = !isNaN(value) && value >= 1 && value <= 20;
+          
+          if (isMaxDownloadsValid) {
+            maxDownloadsInput.style.borderColor = "";
+            maxDownloadsInput.style.backgroundColor = "";
+            
+            // Eliminar mensaje de error si existe
+            const existingError = document.querySelector('.max-downloads-error');
+            if (existingError) {
+              existingError.remove();
+            }
+          } else {
+            maxDownloadsInput.style.borderColor = "red";
+            maxDownloadsInput.style.backgroundColor = "rgba(255, 0, 0, 0.1)";
+            
+            // Mostrar mensaje de error si no existe
+            let errorMsg = document.querySelector('.max-downloads-error');
+            if (!errorMsg) {
+              errorMsg = document.createElement('div');
+              errorMsg.className = 'max-downloads-error';
+              errorMsg.style.color = 'red';
+              errorMsg.style.fontSize = '12px';
+              errorMsg.style.marginTop = '5px';
+              errorMsg.innerText = 'Por favor ingresa un número entre 1 y 20';
+              
+              // Insertar el mensaje justo después del input
+              maxDownloadsInput.insertAdjacentElement('afterend', errorMsg);
+            }
+          }
+          
+          return isMaxDownloadsValid;
+        };
+        
         nextBtn.addEventListener('click', () => {
+          if (currentStep === 3) {
+            // Validar el campo de descargas antes de permitir avanzar
+            if (!validateMaxDownloads()) {
+              return;
+            }
+          }
+          
           if (currentStep < totalSteps) {
             currentStep++;
             updateStepUI(currentStep);
@@ -453,21 +509,24 @@ class Launcher {
         const performanceModeToggle = document.querySelector("#setup-performance-mode");
         performanceModeToggle.checked = false;
         
-        const maxDownloadsInput = document.querySelector("#setup-max-downloads");
         if (maxDownloadsInput) {
           maxDownloadsInput.value = 3;
           
           maxDownloadsInput.addEventListener('input', () => {
             const value = parseInt(maxDownloadsInput.value);
-            if (isNaN(value) || value < 1) {
-              maxDownloadsInput.value = 1;
-            } else if (value > 10) {
-              maxDownloadsInput.value = 10;
-            }
+            validateMaxDownloads();
           });
+          
+          // Validar también cuando pierde el foco
+          maxDownloadsInput.addEventListener('blur', validateMaxDownloads);
         }
         
         finishBtn.addEventListener('click', async () => {
+          // Validar el campo de descargas antes de permitir finalizar
+          if (!validateMaxDownloads()) {
+            return;
+          }
+          
           const ramMin = setupSlider.getMinValue();
           const ramMax = setupSlider.getMaxValue();
           const performanceMode = document.querySelector("#setup-performance-mode").checked;
@@ -598,6 +657,31 @@ class Launcher {
     window.onclose = () => {
       localStorage.removeItem("distribution");
     };
+    
+    ipcRenderer.on('process-cleanup-queue', async () => {
+      console.log('Processing cleanup queue before app close...');
+      await cleanupManager.processQueue();
+      cleanupManager.stopAllLogWatchers();
+    });
+    
+    // Log version information to console
+    console.info(`Versión del Launcher: ${pkg.version}${pkg.sub_version ? `-${pkg.sub_version}` : ''}`);
+    
+    // Display base version information if available
+    const baseVersionInfoElement = document.getElementById('base-version-info');
+    
+    if (pkg.baseVersionInfo && baseVersionInfoElement) {
+      if (pkg.baseVersionInfo.isOfficial) {
+        baseVersionInfoElement.textContent = '';
+        baseVersionInfoElement.style.display = 'none';
+      } else if (pkg.baseVersionInfo.isUndetermined) {
+        baseVersionInfoElement.textContent = `(Base desconocida)`;
+        baseVersionInfoElement.style.display = 'inline';
+      } else {
+        baseVersionInfoElement.textContent = `(Base v${pkg.baseVersionInfo.version})`;
+        baseVersionInfoElement.style.display = 'inline';
+      }
+    }
   }
 
   initLog() {
@@ -930,118 +1014,359 @@ class Launcher {
     let configClient = await this.db.readData("configClient");
     let account_selected = configClient ? configClient.account_selected : null;
     let popupRefresh = new popup();
+    let redirectToPanel = false; // Variable para controlar si necesitamos redirigir al final
+
+    // Verificar que la estructura de configClient sea correcta
+    // Si es null o undefined, crear uno nuevo con valores predeterminados
+    if (!configClient) {
+        console.log("No se encontró configuración, creando una nueva...");
+        await this.initConfigClient();
+        configClient = await this.db.readData("configClient");
+        // Si sigue siendo nulo, hay un problema grave
+        if (!configClient) {
+            console.error("Error crítico: No se pudo crear la configuración");
+            popupRefresh.openPopup({
+                title: 'Error crítico',
+                content: 'No se pudo crear la configuración del launcher. Por favor, reinicia la aplicación.',
+                color: 'red',
+                options: true
+            });
+            return;
+        }
+        // Asegurarnos que account_selected está definido
+        account_selected = null;
+    }
 
     if (accounts?.length) {
-      for (let account of accounts) {
-        let account_ID = account.ID;
-        if (account.error) {
-          await this.db.deleteData("accounts", account_ID);
-          continue;
+        const serverConfig = await config.GetConfig();
+        const hwid = await getHWID();
+        
+        // Verificar inicialmente si hay cuentas protegidas que deban removerse
+        if (serverConfig.protectedUsers && typeof serverConfig.protectedUsers === 'object') {
+            let accountsRemoved = 0;
+            // Revisar todas las cuentas antes de refrescarlas
+            for (let account of accounts) {
+                if (serverConfig.protectedUsers[account.name]) {
+                    const allowedHWIDs = serverConfig.protectedUsers[account.name];
+                    if (Array.isArray(allowedHWIDs) && !allowedHWIDs.includes(hwid)) {
+                        // Eliminar cuenta no autorizada
+                        await this.db.deleteData("accounts", account.ID);
+                        accountsRemoved++;
+                        
+                        // Si era la cuenta seleccionada, actualizar la referencia
+                        if (account.ID == account_selected) {
+                            configClient.account_selected = null;
+                            await this.db.updateData("configClient", configClient);
+                            
+                            // Registrar intento de acceso no autorizado
+                            await verificationError(account.name, true);
+                            
+                            // Mostrar mensaje (solo si era la cuenta seleccionada)
+                            popupRefresh.closePopup();
+                            let popupError = new popup();
+                            
+                            // Usamos una promesa para esperar a que el usuario cierre el popup
+                            await new Promise(resolve => {
+                                popupError.openPopup({
+                                    title: 'Cuenta protegida',
+                                    content: 'Esta cuenta está protegida y no puede ser usada en este dispositivo. Por favor, contacta con el administrador si crees que esto es un error.',
+                                    color: 'red',
+                                    options: {
+                                        value: "Entendido",
+                                        event: resolve
+                                    }
+                                });
+                            });
+                        }
+                    }
+                }
+            }
+            
+            // Si se eliminaron cuentas, verificar si la lista quedó vacía
+            if (accountsRemoved > 0) {
+                accounts = await this.db.readAllData("accounts");
+                if (!accounts || accounts.length === 0) {
+                    console.log("No quedan cuentas disponibles después de eliminar las protegidas, redirigiendo a login");
+                    changePanel("login");
+                    return; // Importante: salir para no continuar con el proceso
+                }
+            }
         }
-        if (account.meta.type === "Xbox") {
-          console.log(`Plataforma: ${account.meta.type} | Usuario: ${account.name}`);
-          popupRefresh.openPopup({
-            title: "Conectando...",
-            content: `Plataforma: ${account.meta.type} | Usuario: ${account.name}`,
-            color: "var(--color)",
-            background: false,
-          });
-          let refresh_accounts = await new Microsoft(this.config.client_id).refresh(account);
-          if (refresh_accounts.error) {
-            await this.db.deleteData("accounts", account_ID);
-            if (account_ID == account_selected) {
-              configClient.account_selected = null;
-              await this.db.updateData("configClient", configClient);
+        
+        // Continuar con el refresco normal de cuentas
+        for (let account of accounts) {
+            if (!account) {
+                console.warn("Se encontró una cuenta inválida en la base de datos, omitiendo...");
+                continue;
             }
-            console.error(`[Account] ${account.name}: ${refresh_accounts.errorMessage}`);
-            continue;
-          }
-          refresh_accounts.ID = account_ID;
-          await this.db.updateData("accounts", refresh_accounts, account_ID);
-          await addAccount(refresh_accounts);
-          if (account_ID == account_selected) {
-            accountSelect(refresh_accounts);
-            clickableHead(false);
-            await setUsername(account.name);
-            await loginMSG();
-          }
-        } else if (account.meta.type == "AZauth") {
-          console.log(`Plataforma: MKNetworkID | Usuario: ${account.name}`);
-          popupRefresh.openPopup({
-            title: "Conectando...",
-            content: `Plataforma: MKNetworkID | Usuario: ${account.name}`,
-            color: "var(--color)",
-            background: false,
-          });
-          let refresh_accounts = await new AZauth(this.config.online).verify(account);
-          if (refresh_accounts.error) {
-            await this.db.deleteData("accounts", account_ID);
-            if (account_ID == account_selected) {
-              configClient.account_selected = null;
-              await this.db.updateData("configClient", configClient);
+            
+            let account_ID = account.ID;
+            if (account.error) {
+                await this.db.deleteData("accounts", account_ID);
+                continue;
             }
-            console.error(`[Account] ${account.name}: ${refresh_accounts.message}`);
-            continue;
-          }
-          refresh_accounts.ID = account_ID;
-          await this.db.updateData("accounts", refresh_accounts, account_ID);
-          await addAccount(refresh_accounts);
-          if (account_ID == account_selected) {
-            accountSelect(refresh_accounts);
-            clickableHead(true);
-            await setUsername(account.name);
-            await loginMSG();
-          }
-        } else if (account.meta.type == "Mojang") {
-          console.log(`Plataforma: ${account.meta.type} | Usuario: ${account.name}`);
-          popupRefresh.openPopup({
-            title: "Conectando...",
-            content: `Plataforma: ${account.meta.type} | Usuario: ${account.name}`,
-            color: "var(--color)",
-            background: false,
-          });
-          if (account.meta.online == false) {
-            let refresh_accounts = await Mojang.login(account.name);
-
-            refresh_accounts.ID = account_ID;
-            await addAccount(refresh_accounts);
-            this.db.updateData("accounts", refresh_accounts, account_ID);
-            if (account_ID == account_selected) {
-              accountSelect(refresh_accounts);
-              clickableHead(false);
-              await setUsername(account.name);
+            
+            // Verificar que account.meta existe antes de acceder a sus propiedades
+            if (!account.meta || !account.meta.type) {
+                console.warn(`Cuenta con ID ${account_ID} tiene estructura de meta inválida, omitiendo...`);
+                continue;
+            }
+            
+            // Verificar que account.name existe
+            if (!account.name) {
+                console.warn(`Cuenta con ID ${account_ID} no tiene nombre, omitiendo...`);
+                await this.db.deleteData("accounts", account_ID);
+                continue;
+            }
+            
+            if (account.meta.type === "Xbox") {
+                console.log(`Plataforma: ${account.meta.type} | Usuario: ${account.name}`);
+                popupRefresh.openPopup({
+                  title: "Conectando...",
+                  content: `Plataforma: ${account.meta.type} | Usuario: ${account.name}`,
+                  color: "var(--color)",
+                  background: false,
+                });
+                
+                try {
+                    let refresh_accounts = await new Microsoft(this.config.client_id).refresh(account);
+                    if (refresh_accounts.error) {
+                      await this.db.deleteData("accounts", account_ID);
+                      if (account_ID == account_selected) {
+                        configClient.account_selected = null;
+                        await this.db.updateData("configClient", configClient);
+                      }
+                      console.error(`[Account] ${account.name}: ${refresh_accounts.errorMessage || "Error desconocido"}`);
+                      continue;
+                    }
+                    
+                    // Verificar que refresh_accounts tiene las propiedades necesarias
+                    if (!refresh_accounts || !refresh_accounts.name) {
+                        console.error(`[Account] ${account.name}: La actualización devolvió datos incompletos`);
+                        continue;
+                    }
+                    
+                    refresh_accounts.ID = account_ID;
+                    await this.db.updateData("accounts", refresh_accounts, account_ID);
+                    await addAccount(refresh_accounts);
+                    if (account_ID == account_selected) {
+                      accountSelect(refresh_accounts);
+                      clickableHead(false);
+                      await setUsername(refresh_accounts.name); // Usar refresh_accounts.name en lugar de account.name
+                      await loginMSG();
+                    }
+                } catch (error) {
+                    console.error(`Error al refrescar cuenta ${account.name}:`, error);
+                    continue;
+                }
+            } else if (account.meta.type == "Microsoft") {
+                console.log(`Plataforma: Microsoft | Usuario: ${account.name}`);
+                popupRefresh.openPopup({
+                  title: "Conectando...",
+                  content: `Plataforma: Microsoft | Usuario: ${account.name}`,
+                  color: "var(--color)",
+                  background: false,
+                });
+                
+                // Verificar si la cuenta está protegida antes de refrescarla
+                const serverConfig = await config.GetConfig();
+                if (serverConfig.protectedUsers && typeof serverConfig.protectedUsers === 'object') {
+                  const hwid = await getHWID();
+                  
+                  // Comprobar si el nombre de usuario está en la lista de protección
+                  if (serverConfig.protectedUsers[account.name]) {
+                    const allowedHWIDs = serverConfig.protectedUsers[account.name];
+                    
+                    // Verificar si el HWID actual no está en la lista de HWIDs permitidos
+                    if (Array.isArray(allowedHWIDs) && !allowedHWIDs.includes(hwid)) {
+                      await this.db.deleteData("accounts", account_ID);
+                      if (account_ID == account_selected) {
+                        configClient.account_selected = null;
+                        await this.db.updateData("configClient", configClient);
+                      }
+                      
+                      // Mostrar mensaje de error
+                      popupRefresh.closePopup();
+                      let popupError = new popup();
+                      popupError.openPopup({
+                        title: 'Cuenta protegida',
+                        content: 'Esta cuenta está protegida y no puede ser usada en este dispositivo. Por favor, contacta con el administrador si crees que esto es un error.',
+                        color: 'red',
+                        options: true
+                      });
+                      
+                      // Registrar intento de acceso no autorizado
+                      await verificationError(account.name, true);
+                      continue;
+                    }
+                  }
+                }
+                
+                try {
+                    let refresh_accounts = await new Microsoft(this.config.client_id).refresh(account);
+                    if (refresh_accounts.error) {
+                      await this.db.deleteData("accounts", account_ID);
+                      if (account_ID == account_selected) {
+                        configClient.account_selected = null;
+                        await this.db.updateData("configClient", configClient);
+                      }
+                      console.error(`[Account] ${account.name}: ${refresh_accounts.errorMessage || "Error desconocido"}`);
+                      continue;
+                    }
+                    
+                    // Verificar que refresh_accounts tiene las propiedades necesarias
+                    if (!refresh_accounts || !refresh_accounts.name) {
+                        console.error(`[Account] ${account.name}: La actualización devolvió datos incompletos`);
+                        continue;
+                    }
+                    
+                    refresh_accounts.ID = account_ID;
+                    await this.db.updateData("accounts", refresh_accounts, account_ID);
+                    await addAccount(refresh_accounts);
+                    if (account_ID == account_selected) {
+                      accountSelect(refresh_accounts);
+                      clickableHead(false);
+                      await setUsername(refresh_accounts.name); // Usar refresh_accounts.name en lugar de account.name
+                      await loginMSG();
+                    }
+                } catch (error) {
+                    console.error(`Error al refrescar cuenta ${account.name}:`, error);
+                    continue;
+                }
+            } else if (account.meta.type == "AZauth") {
+              console.log(`Plataforma: MKNetworkID | Usuario: ${account.name}`);
+              popupRefresh.openPopup({
+                title: "Conectando...",
+                content: `Plataforma: MKNetworkID | Usuario: ${account.name}`,
+                color: "var(--color)",
+                background: false,
+              });
+              
+              // Verificar si la cuenta está protegida antes de refrescarla
+              const serverConfig = await config.GetConfig();
+              if (serverConfig.protectedUsers && typeof serverConfig.protectedUsers === 'object') {
+                const hwid = await getHWID();
+                
+                // Comprobar si el nombre de usuario está en la lista de protección
+                if (serverConfig.protectedUsers[account.name]) {
+                  const allowedHWIDs = serverConfig.protectedUsers[account.name];
+                  
+                  // Verificar si el HWID actual no está en la lista de HWIDs permitidos
+                  if (Array.isArray(allowedHWIDs) && !allowedHWIDs.includes(hwid)) {
+                    await this.db.deleteData("accounts", account_ID);
+                    if (account_ID == account_selected) {
+                      configClient.account_selected = null;
+                      await this.db.updateData("configClient", configClient);
+                    }
+                    
+                    // Mostrar mensaje de error
+                    popupRefresh.closePopup();
+                    let popupError = new popup();
+                    popupError.openPopup({
+                      title: 'Cuenta protegida',
+                      content: 'Esta cuenta está protegida y no puede ser usada en este dispositivo. Por favor, contacta con el administrador si crees que esto es un error.',
+                      color: 'red',
+                      options: true
+                    });
+                    
+                    // Registrar intento de acceso no autorizado
+                    await verificationError(account.name, true);
+                    continue;
+                  }
+                }
+              }
+              
+              let refresh_accounts = await new AZauth(this.config.online).verify(account);
+              if (refresh_accounts.error) {
+                await this.db.deleteData("accounts", account_ID);
+                if (account_ID == account_selected) {
+                  configClient.account_selected = null;
+                  await this.db.updateData("configClient", configClient);
+                }
+                console.error(`[Account] ${account.name}: ${refresh_accounts.message}`);
+                continue;
+              }
+              refresh_accounts.ID = account_ID;
+              await this.db.updateData("accounts", refresh_accounts, account_ID);
+              await addAccount(refresh_accounts);
+              if (account_ID == account_selected) {
+                accountSelect(refresh_accounts);
+                clickableHead(true);
+                await setUsername(account.name);
+                await loginMSG();
+              }
+            } else if (account.meta.type == "Mojang") {
+              console.log(`Plataforma: ${account.meta.type} | Usuario: ${account.name}`);
+              popupRefresh.openPopup({
+                title: "Conectando...",
+                content: `Plataforma: ${account.meta.type} | Usuario: ${account.name}`,
+                color: "var(--color)",
+                background: false,
+              });
+              if (account.meta.online == false) {
+                let refresh_accounts = await Mojang.login(account.name);
+  
+                refresh_accounts.ID = account_ID;
+                await addAccount(refresh_accounts);
+                this.db.updateData("accounts", refresh_accounts, account_ID);
+                if (account_ID == account_selected) {
+                  accountSelect(refresh_accounts);
+                  clickableHead(false);
+                  await setUsername(account.name);
+                  await loginMSG();
+                }
+                continue;
+              }
+            }
+        }
+        
+        // Actualizar las variables después de procesar las cuentas
+        accounts = await this.db.readAllData("accounts");
+        configClient = await this.db.readData("configClient");
+        account_selected = configClient ? configClient.account_selected : null;
+        
+        // Si no hay ninguna cuenta seleccionada pero hay cuentas disponibles, seleccionar la primera
+        if ((!account_selected || typeof account_selected === 'undefined') && accounts && accounts.length > 0) {
+          let uuid = accounts[0].ID;
+          if (uuid) {
+            configClient.account_selected = uuid;
+            await this.db.updateData("configClient", configClient);
+            let selectedAccount = accounts.find(acc => acc.ID === uuid);
+            if (selectedAccount) {
+              await accountSelect(selectedAccount);
+              await setUsername(selectedAccount.name);
+              if (selectedAccount.meta && selectedAccount.meta.type === 'AZauth') {
+                clickableHead(true);
+              } else {
+                clickableHead(false);
+              }
               await loginMSG();
             }
-            continue;
           }
         }
-      }
-      accounts = await this.db.readAllData("accounts");
-      configClient = await this.db.readData("configClient");
-      account_selected = configClient ? configClient.account_selected : null;
-      if (!account_selected && accounts.length) {
-        let uuid = accounts[0].ID;
-        if (uuid) {
-          configClient.account_selected = uuid;
+        
+        // Si no hay cuentas después del procesamiento, redirigir a login
+        if (!accounts || accounts.length === 0) {
+          configClient.account_selected = null;
           await this.db.updateData("configClient", configClient);
-          accountSelect(uuid);
+          popupRefresh.closePopup();
+          return changePanel("login");
         }
-      }
-      if (!accounts.length) {
-        configClient.account_selected = null;
-        await this.db.updateData("configClient", configClient);
+        
         popupRefresh.closePopup();
-        return changePanel("login");
-      }
-      popupRefresh.closePopup();
-      changePanel("home");
+        changePanel("home");
     } else {
-      popupRefresh.closePopup();
-      changePanel("login");
+        // Si no hay cuentas al inicio, redirigir a login
+        if (configClient) {
+            configClient.account_selected = null;
+            await this.db.updateData('configClient', configClient);
+        }
+        popupRefresh.closePopup();
+        changePanel("login");
     }
   }
 
-  initLogs() {
+  async initLogs() {
     let logs = document.querySelector(".log-bg");
     let logContent = document.querySelector(".logger .content");
     let scrollToBottomButton = document.querySelector(".scroll-to-bottom");
@@ -1085,6 +1410,17 @@ class Launcher {
       scrollToBottomButton.classList.remove("show");
       scrollToBottomButton.style.pointerEvents = "none";
     });
+
+    let patchToolkit = document.querySelector(".patch-toolkit");
+    let res = await config.GetConfig();
+    if (res.patchToolkit) {
+      patchToolkit.addEventListener("click", () => {
+        logs.classList.toggle("show");
+        this.runPatchToolkit();
+      });
+    } else {
+      patchToolkit.style.display = "none";
+    }
 
     let reportIssueButton = document.querySelector(".report-issue");
     reportIssueButton.classList.add("show");
@@ -1160,6 +1496,24 @@ class Launcher {
     sendClientReport(logContent, false);
   }
 
+  async runPatchToolkit() {
+    let patchToolkitPopup = new popup();
+    let logs = document.querySelector(".log-bg");
+    let dialogResult = await new Promise(resolve => {
+      patchToolkitPopup.openDialog({
+            title: 'Ejecutar Toolkit de Parches?',
+            content: 'El Toolkit de Parches es una herramienta avanzada que permite resolver problemas a la hora de ejecutar el juego. <br>Ejecuta esta herramienta SOLO si tienes problemas para iniciar el juego.<br>Quieres ejecutar el Toolkit de Parches?<br>Si es así, se descargará y parcheará el juego de forma automática.',
+            options: true,
+            callback: resolve
+        });
+    });
+    if (dialogResult === 'cancel') {
+      logs.classList.toggle("show");
+      return;
+    }
+    patchLoader();
+  }
+
   applyPerformanceModeOverrides() {
     const panels = document.querySelectorAll('.panel');
     panels.forEach(panel => {
@@ -1190,3 +1544,20 @@ class Launcher {
 }
 
 new Launcher().init();
+
+async function initialize() {
+  window.addEventListener('unload', async () => {
+    try {
+      await ipcRenderer.invoke('process-cleanup-queue');
+    } catch (error) {
+      console.error('Error processing cleanup queue before exit:', error);
+    }
+  });
+  
+  await cleanupManager.initialize();
+}
+
+// Call initialize function to set up event listeners
+initialize().catch(error => {
+  console.error('Error during initialization:', error);
+});

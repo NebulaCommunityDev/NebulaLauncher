@@ -82,7 +82,13 @@ else app.whenReady().then(() => {
 ipcMain.on('main-window-open', () => MainWindow.createWindow());
 ipcMain.on('main-window-dev-tools', () => MainWindow.getWindow().webContents.openDevTools({ mode: 'detach' }));
 ipcMain.on('main-window-dev-tools-close', () => MainWindow.getWindow().webContents.closeDevTools());
-ipcMain.on('main-window-close', () => MainWindow.destroyWindow());
+ipcMain.on('main-window-close', async () => {
+    const mainWindow = MainWindow.getWindow();
+    if (mainWindow) {
+        await processCleanupQueue(mainWindow);
+    }
+    MainWindow.destroyWindow();
+});
 ipcMain.on('main-window-reload', () => MainWindow.getWindow().reload());
 ipcMain.on('main-window-progress', (event, options) => MainWindow.getWindow().setProgressBar(options.progress / options.size));
 ipcMain.on('main-window-progress-reset', () => MainWindow.getWindow().setProgressBar(-1));
@@ -160,7 +166,6 @@ ipcMain.on('open-discord-url', () => {
 ipcMain.on('app-restart', () => {
     console.log('Reiniciando aplicación...');
     
-    // Clear any cached data
     app.relaunch({ args: process.argv.slice(1).concat(['--restarted']) });
     app.exit(0);
 });
@@ -249,4 +254,49 @@ autoUpdater.on('download-progress', (progress) => {
 autoUpdater.on('error', (err) => {
     const updateWindow = UpdateWindow.getWindow();
     if (updateWindow) updateWindow.webContents.send('error', err);
+});
+
+async function processCleanupQueue(win) {
+    if (win && !win.isDestroyed()) {
+        try {
+            win.webContents.send('process-cleanup-queue');
+            
+            await new Promise(resolve => setTimeout(resolve, 800));
+        } catch (err) {
+            console.error('Error processing cleanup queue on close:', err);
+        }
+    }
+}
+
+ipcMain.on('app-quit', async () => {
+    const mainWindow = MainWindow.getWindow();
+    if (mainWindow) {
+        await processCleanupQueue(mainWindow);
+    }
+    app.exit(0);
+});
+
+ipcMain.handle('process-cleanup-queue', async () => {
+    try {
+        const mainWindow = MainWindow.getWindow();
+        if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('process-cleanup-queue');
+            
+            await new Promise(resolve => setTimeout(resolve, 500));
+            return { success: true };
+        }
+        return { success: false, error: 'Window not available' };
+    } catch (error) {
+        console.error('Error processing cleanup queue:', error);
+        return { success: false, error: error.message };
+    }
+});
+
+app.on('before-quit', async (event) => {
+    const mainWindow = MainWindow.getWindow();
+    if (mainWindow && !mainWindow.isDestroyed()) {
+        event.preventDefault();
+        await processCleanupQueue(mainWindow);
+        setTimeout(() => app.exit(0), 800);
+    }
 });

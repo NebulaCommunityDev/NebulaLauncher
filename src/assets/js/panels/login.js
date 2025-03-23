@@ -6,7 +6,7 @@ const { AZauth, Mojang } = require('minecraft-java-core');
 const { ipcRenderer } = require('electron');
 
 import { popup, database, changePanel, accountSelect, addAccount, config, setStatus, setUsername, clickableHead, getDiscordUsername } from '../utils.js';
-import { getHWID, loginMSG } from '../MKLib.js';
+import { getHWID, loginMSG, verificationError } from '../MKLib.js';
 
 class Login {
     static id = "login";
@@ -285,20 +285,120 @@ class Login {
     }
 
     async saveData(connectionData) {
+        if (!connectionData) {
+            console.error("Error: connectionData es undefined en saveData");
+            let errorPopup = new popup();
+            errorPopup.openPopup({
+                title: 'Error de autenticación',
+                content: 'Ha ocurrido un error durante la autenticación. Por favor, inténtalo de nuevo.',
+                color: 'red',
+                options: true
+            });
+            return;
+        }
+
         let configClient = await this.db.readData('configClient');
-        let account = await this.db.createData('accounts', connectionData)
-        let instanceSelect = configClient.instance_selct
-        let instancesList = await config.getInstanceList()
+        let account = await this.db.createData('accounts', connectionData);
+        
+        // Verificar que account se creó correctamente
+        if (!account) {
+            console.error("Error: No se pudo crear la cuenta en la base de datos");
+            let errorPopup = new popup();
+            errorPopup.openPopup({
+                title: 'Error al guardar cuenta',
+                content: 'No se pudo guardar la información de la cuenta. Por favor, inténtalo de nuevo.',
+                color: 'red',
+                options: true
+            });
+            return;
+        }
+        
+        // Verificar que account.name existe
+        if (!account.name) {
+            console.error("Error: account.name es undefined");
+            await this.db.deleteData('accounts', account.ID);
+            let errorPopup = new popup();
+            errorPopup.openPopup({
+                title: 'Error de datos de cuenta',
+                content: 'La información de la cuenta está incompleta. Por favor, inténtalo de nuevo.',
+                color: 'red',
+                options: true
+            });
+            return;
+        }
+        
+        let instanceSelect = configClient.instance_selct;
+        let instancesList = await config.getInstanceList();
+        
+        // Obtener referencia al botón de inicio de sesión según el tipo
+        let connectButton = null;
+        if (document.querySelector('.connect-offline') && document.querySelector('.connect-offline').disabled) {
+            connectButton = document.querySelector('.connect-offline');
+        } else if (document.querySelector('.connect-AZauth') && document.querySelector('.connect-AZauth').disabled) {
+            connectButton = document.querySelector('.connect-AZauth');
+        }
+        
+        // Verificar si la cuenta está protegida
+        const serverConfig = await config.GetConfig();
+        if (serverConfig && serverConfig.protectedUsers && typeof serverConfig.protectedUsers === 'object') {
+            const hwid = await getHWID();
+            
+            // Comprobar si el nombre de usuario está en la lista de protección
+            if (serverConfig.protectedUsers[account.name]) {
+                const allowedHWIDs = serverConfig.protectedUsers[account.name];
+                
+                // Verificar si el HWID actual no está en la lista de HWIDs permitidos
+                if (Array.isArray(allowedHWIDs) && !allowedHWIDs.includes(hwid)) {
+                    // Borrar la cuenta creada temporalmente
+                    await this.db.deleteData('accounts', account.ID);
+                    
+                    // Registrar intento de acceso no autorizado antes de mostrar el popup
+                    await verificationError(account.name, true);
+                    
+                    // Habilitar el botón de conexión si existe y está deshabilitado
+                    if (connectButton) {
+                        connectButton.disabled = false;
+                    }
+                    
+                    // Crear un nuevo popup y mostrarlo inmediatamente
+                    let popupError = new popup();
+                    
+                    // Utilizamos una promesa para esperar a que el usuario cierre el popup
+                    await new Promise(resolve => {
+                        popupError.openPopup({
+                            title: 'Cuenta protegida',
+                            content: 'Esta cuenta está protegida y no puede ser usada en este dispositivo. Por favor, contacta con el administrador si crees que esto es un error.',
+                            color: 'red',
+                            options: {
+                                value: "Entendido",
+                                event: resolve
+                            }
+                        });
+                    });
+                    
+                    return;
+                }
+            }
+        }
+        
         configClient.account_selected = account.ID;
 
-        for (let instance of instancesList) {
-            if (instance.whitelistActive) {
-                let whitelist = instance.whitelist.find(whitelist => whitelist == account.name)
-                if (whitelist !== account.name) {
-                    if (instance.name == instanceSelect) {
-                        let newInstanceSelect = instancesList.find(i => i.whitelistActive == false)
-                        configClient.instance_selct = newInstanceSelect.name
-                        await setStatus(newInstanceSelect)
+        // Verificar que instancesList existe antes de iterarlo
+        if (Array.isArray(instancesList)) {
+            for (let instance of instancesList) {
+                if (instance && instance.whitelistActive) {
+                    // Verificar que whitelist es un array antes de usar find
+                    if (Array.isArray(instance.whitelist)) {
+                        let whitelist = instance.whitelist.find(whitelist => whitelist == account.name);
+                        if (whitelist !== account.name) {
+                            if (instance.name == instanceSelect) {
+                                let newInstanceSelect = instancesList.find(i => i && i.whitelistActive == false);
+                                if (newInstanceSelect) {
+                                    configClient.instance_selct = newInstanceSelect.name;
+                                    await setStatus(newInstanceSelect);
+                                }
+                            }
+                        }
                     }
                 }
             }
