@@ -6,7 +6,7 @@ import { config, database, changePanel, appdata, setStatus, setInstanceBackgroun
 import { getHWID, checkHWID, getFetchError, playMSG, playquitMSG, addInstanceMSG } from '../MKLib.js';
 import cleanupManager from '../utils/cleanup-manager.js';
 
-const clientId = '1307003977442787451';
+const clientId = '1343663951124107415';
 const DiscordRPC = require('discord-rpc');
 const RPC = new DiscordRPC.Client({ transport: 'ipc' });
 const fs = require('fs');
@@ -28,7 +28,7 @@ RPC.on('ready', async () => {
         startTimestamp: startingTime,
         largeImageKey: 'icon',
         smallImageKey: 'verificado',
-        largeImageText: `Miguelki Network`,
+        largeImageText: `Nebula Community`,
         instance: true,
         buttons: [
             {
@@ -131,7 +131,7 @@ class Home {
                     LogBan = true;
                 }
                 notificationTitle.innerHTML = '¡Atención!';
-                notificationContent.innerHTML = "No se ha podido conectar con el Anticheat de Miguelki Network y por lo tanto no se podrá jugar a ninguna instancia.";
+                notificationContent.innerHTML = "No se ha podido conectar con el Anticheat de Nebula Commnunity y por lo tanto no se podrá jugar a ninguna instancia.";
                 notification.style.background = colorRed;
                 notificationIcon.src = 'assets/images/notification/error.png';
                 await this.showNotification();
@@ -566,7 +566,7 @@ class Home {
                 let popupError = new popup()
                 popupError.openPopup({
                     title: 'Error',
-                    content: 'No puedes iniciar ninguna instancia debido al bloqueo de dispositivo presente.<br><br>Si crees que esto es un error, abre ticket en el discord de Miguelki Network.',
+                    content: 'No puedes iniciar ninguna instancia debido al bloqueo de dispositivo presente.<br><br>Si crees que esto es un error, abre ticket en el discord de Nebula Commnunity.',
                     color: 'red',
                     options: true
                 })
@@ -809,7 +809,7 @@ class Home {
                     startTimestamp: startingTime,
                     largeImageKey: 'icon',
                     smallImageKey: 'verificado',
-                    largeImageText: `Miguelki Network`,
+                    largeImageText: `Nebula Commnunity`,
                     instance: true,
                     buttons: [
                         {
@@ -838,7 +838,7 @@ class Home {
                         startTimestamp: startingTime,
                         largeImageKey: 'icon',
                         smallImageKey: 'verificado',
-                        largeImageText: `Miguelki Network`,
+                        largeImageText: `Nebula Commnunity`,
                         instance: true,
                         buttons: [
                             {
@@ -879,7 +879,7 @@ class Home {
                         state: `En el launcher`,
                         largeImageKey: 'icon',
                         smallImageKey: 'verificado',
-                        largeImageText: `Miguelki Network`,
+                        largeImageText: `Nebula Commnunity`,
                         instance: true,
                         buttons: [
                             {

@@ -85,6 +85,14 @@ class Login {
         loginOffline.style.display = 'block';
 
         microsoftcracked.addEventListener('click', () => {
+            //MICROSOFT DESHABILITADO POR EL MOMENTO
+            popupLogin.openPopup({
+                title: 'No se puede iniciar sesión',
+                content: 'Actualmente no se encuentra disponible el inicio de sesión a través de Microsoft. Por favor utiliza otro método.',
+                options: true
+            });
+            return;
+
             popupLogin.openPopup({
                 title: 'Iniciar sesión',
                 content: 'Por favor continua en la ventana de inicio de sesión de Microsoft......',
