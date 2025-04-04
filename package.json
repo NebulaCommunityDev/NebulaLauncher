@@ -2,7 +2,7 @@
     "name": "Nebula-Community-Launcher",
     "preductname": "Nebula Community Launcher",
     "version": "1.0.8",
-    "sub_version": "",
+    "sub_version": "b",
     "changelog": "Se ha corregido errores al parchear el launcher.",
     "description": "Launcher de minecraft para los servidores de Nebula Community",
     "main": "src/app.js",
