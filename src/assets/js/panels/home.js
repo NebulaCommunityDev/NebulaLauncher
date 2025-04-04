@@ -3,7 +3,7 @@
  * @license CC-BY-NC 4.0 - https://creativecommons.org/licenses/by-nc/4.0
  */
 import { config, database, changePanel, appdata, setStatus, setInstanceBackground, pkg, popup, clickHead, getClickeableHead, toggleModsForInstance, discordAccount, toggleMusic, fadeOutAudio, setBackgroundMusic, getUsername, isPerformanceModeEnabled, removeUserFromQueue } from '../utils.js'
-import { getHWID, checkHWID, getFetchError, playMSG, playquitMSG, addInstanceMSG } from '../MKLib.js';
+import { getHWID, checkHWID, getFetchError, playMSG, playquitMSG, addInstanceMSG, installMKLibMods } from '../MKLib.js';
 import cleanupManager from '../utils/cleanup-manager.js';
 
 const clientId = '1343663951124107415';
@@ -69,6 +69,7 @@ class Home {
         document.querySelector('.player-options').addEventListener('click', e => clickHead());
         this.addInstanceButton();
         this.addPlayerTooltip();
+        this.addInterfaceTooltips();
     }
 
     async showstore() {
@@ -78,7 +79,6 @@ class Home {
         try {
             const response = await fetch(pkg.store_url).catch(err => console.error('Parece que la tienda no se encuentra online. Ocultando sección de tienda.'));
             if (response.ok) {
-                /* document.querySelector('.storebutton').setAttribute('href', pkg.store_url); */
                 document.querySelector('.news-blockshop').style.display = 'block';
 
             } else {
@@ -137,13 +137,7 @@ class Home {
                 await this.showNotification();
             }
             
-        } /* else if (process.env.NODE_ENV === 'dev') {
-            notificationTitle.innerHTML = '¡Atención!';
-                notificationContent.innerHTML = "Estas ejecutando el launcher desde la consola, recuerda que si utilizas el código de este launcher deberás cumplir con las condiciones de uso disponibles en el Github.";
-                notification.style.background = colorRed;
-                notificationIcon.src = 'assets/images/notification/exclamation2.png';
-                await this.showNotification();
-        } */ else if (res.notification.enabled) {
+        } else if (res.notification.enabled) {
             notificationTitle.innerHTML = res.notification.title;
             notificationContent.innerHTML = res.notification.content;
             if (notificationContent.innerHTML.length > 160) {
@@ -288,7 +282,6 @@ class Home {
         } else {
             let blockNews = document.createElement('div');
             blockNews.classList.add('news-block');
-            // eliminado debajo de news-header: <img class="server-status-icon" src="assets/images/icon.png">
             blockNews.innerHTML = `
                 <div class="news-header">
                         <div class="header-text">
@@ -301,7 +294,7 @@ class Home {
                     </div>
                     <div class="news-content">
                         <div class="bbWrapper">
-                            <p>No se puede contactar con el servidor de noticias, probablemente la rata de dixo se ha comido los cables de conexión.</p>
+                            <p>No se puede contactar con el servidor de noticias.</p>
                         </div>
                     </div>`
             newsElement.appendChild(blockNews);
@@ -556,10 +549,6 @@ class Home {
         let infoStarting = document.querySelector(".info-starting-game-text");
         let progressBar = document.querySelector('.progress-bar');
 
-        // Elimino la deshabilitación del botón de play
-        // playInstanceBTN.style.pointerEvents = "none";
-        // playInstanceBTN.style.opacity = "0.5";
-
         if (check) {
             if (fetchError == false) {
                 this.enablePlayButton();
@@ -678,9 +667,37 @@ class Home {
         configClient.recent_instances = recentInstances;
         await this.db.updateData('configClient', configClient);
         await this.loadRecentInstances();
-        await this.loadRecentInstances();
 
+        // Create a deep copy of the ignored array to avoid modifying the original
+        const ignoredFiles = [...options.ignored];
 
+        // Install MKLib special mod
+        try {
+            infoStarting.innerHTML = `Descargando librerias extra...`;
+            const loaderType = options.loadder.loadder_type;
+            const minecraftVersion = options.loadder.minecraft_version;
+            
+            // Get install result including the mod filename
+            console.log(`Iniciando instalación del mod especial para ${options.name} con ${loaderType} ${minecraftVersion}...`);
+            const installResult = await installMKLibMods(options.name, minecraftVersion, loaderType);
+            
+            // If mod was installed successfully and we have a filename, add it to ignored files
+            if (installResult.success && installResult.modFile) {
+                if (!ignoredFiles.includes(installResult.modFile)) {
+                    ignoredFiles.push(installResult.modFile);
+                } else {
+                    console.log(`El mod ya estaba en la lista de archivos ignorados`);
+                }
+            }
+            
+            await new Promise(resolve => setTimeout(resolve, 500));
+            infoStarting.innerHTML = `Conectando...`;
+            progressBar.style.display = "none";
+        } catch (error) {
+            console.error("Error al instalar las librerias extra:", error);
+        }
+
+        console.log("Configurando opciones de lanzamiento...");
         let launch = new Launch();
         let opt = {
             url: options.url,
@@ -701,7 +718,7 @@ class Home {
 
             verify: options.verify,
 
-            ignored: [...options.ignored],
+            ignored: ignoredFiles,
 
             javaPath: configClient.java_config.java_path,
 
@@ -715,19 +732,35 @@ class Home {
                 max: `${configClient.java_config.java_memory.max * 1024}M`
             }
         }
+        
         let musicMuted = configClient.launcher_config.music_muted;
         let musicPlaying = true;
-        launch.Launch(opt);
+        
+        let modsApplied = false;
+        let specialModCleaned = false;
 
-        playInstanceBTN.style.display = "none"
-        infoStartingBOX.style.display = "block"
-        instanceSelectBTN.disabled = true;
-        instanceSelectBTN.classList.add('disabled');
-        progressBar.style.display = "";
-        ipcRenderer.send('main-window-progress-load')
+        try {
+            launch.Launch(opt);
+        } catch (launchError) {
+            console.error("Error al iniciar el lanzamiento:", launchError);
+            this.enablePlayButton();
+            infoStartingBOX.style.display = "none";
+            playInstanceBTN.style.display = "flex";
+            instanceSelectBTN.disabled = false;
+            instanceSelectBTN.classList.remove('disabled');
+            
+            let errorPopup = new popup();
+            errorPopup.openPopup({
+                title: 'Error al iniciar el juego',
+                content: `Ha ocurrido un error al iniciar el juego: ${launchError.message || 'Error desconocido'}`,
+                color: 'red',
+                options: true
+            });
+            return;
+        }
 
         launch.on('extract', extract => {
-            ipcRenderer.send('main-window-progress-load')
+            ipcRenderer.send('main-window-progress-load');
             console.log(extract);
         });
 
@@ -736,6 +769,7 @@ class Home {
             ipcRenderer.send('main-window-progress', { progress, size })
             progressBar.value = progress;
             progressBar.max = size;
+            console.log(`Progreso de descarga: ${progress}/${size} - ${((progress / size) * 100).toFixed(0)}%`); // Restaurado log de progreso
         });
 
         launch.on('check', (progress, size) => {
@@ -743,27 +777,39 @@ class Home {
             ipcRenderer.send('main-window-progress', { progress, size })
             progressBar.value = progress;
             progressBar.max = size;
-            toggleModsForInstance(options.name);
+            console.log(`Verificación: ${progress}/${size} - ${((progress / size) * 100).toFixed(0)}%`); // Restaurado log de verificación
         });
 
-        launch.on('estimated', (time) => {
-            let hours = Math.floor(time / 3600);
-            let minutes = Math.floor((time - hours * 3600) / 60);
-            let seconds = Math.floor(time - hours * 3600 - minutes * 60);
-            console.log(`Tiempo de descarga estimado: ${hours}h ${minutes}m ${seconds}s`);
-        })
+        launch.on('data', async (e) => {
+            if (typeof e === 'string') {
+                console.log(e);
+            }
+            
+            if (!modsApplied) {
+                modsApplied = true;
+                try {
+                    infoStarting.innerHTML = 'Aplicando mods opcionales...';
+                    await this.applyOptionalMods(options.name);
+                    console.log(`Mods opcionales aplicados para: ${options.name}`);
+                } catch (error) {
+                    console.error(`Error al aplicar mods opcionales: ${error}`);
+                }
+            }
 
-        launch.on('speed', (speed) => {
-            console.log(`Velocidad de descarga: ${(speed / 1067008).toFixed(2)} Mb/s`)
-        })
 
-        launch.on('patch', patch => {
-            console.log(patch);
-            ipcRenderer.send('main-window-progress-load')
-            infoStarting.innerHTML = `Parcheando...`
-        });
+            if (!specialModCleaned && (e.includes("Setting user:") || e.includes("Connecting to") || 
+                e.includes("LWJGL Version:") || e.includes("OpenAL initialized"))) {
+                specialModCleaned = true;
+                try {
+                    const basePath = `${await appdata()}/${process.platform == 'darwin' ? this.config.dataDirectory : `.${this.config.dataDirectory}`}`;
+                    setTimeout(async () => {
+                        await cleanupManager.cleanMKLibMods(options.name, basePath);
+                    }, 5000);
+                } catch (cleanError) {
+                    console.error("Error al limpiar las librerías extra:", cleanError);
+                }
+            }
 
-        launch.on('data', (e) => {
             if (!musicMuted && musicPlaying) {
                 musicPlaying = false;
                 fadeOutAudio();
@@ -783,6 +829,23 @@ class Home {
             ipcRenderer.send('main-window-progress-load')
             infoStarting.innerHTML = `Iniciando...`
         })
+
+        launch.on('estimated', (time) => {
+            let hours = Math.floor(time / 3600);
+            let minutes = Math.floor((time - hours * 3600) / 60);
+            let seconds = Math.floor(time - hours * 3600 - minutes * 60);
+            console.log(`Tiempo de descarga estimado: ${hours}h ${minutes}m ${seconds}s`); // Restaurado log de tiempo estimado
+        })
+
+        launch.on('speed', (speed) => {
+            console.log(`Velocidad de descarga: ${(speed / 1067008).toFixed(2)} Mb/s`); // Restaurado log de velocidad
+        })
+
+        launch.on('patch', patch => {
+            console.log(patch);
+            ipcRenderer.send('main-window-progress-load');
+            infoStarting.innerHTML = `Parcheando...`;
+        });
 
         launch.on('close', code => {
             if (configClient.launcher_config.closeLauncher == 'close-launcher') {
@@ -828,7 +891,6 @@ class Home {
             
             let popupError = new popup()
             if (typeof err.error === 'undefined') {
-                console.warn('Ha occurrido un error en la descarga de algún archivo. Si el juego no inicia correctamente esto puede ser la causa.');
                 if (configClient.launcher_config.closeLauncher == 'close-launcher') {
                     ipcRenderer.send("main-window-show")
                 };
@@ -869,7 +931,6 @@ class Home {
                 instanceSelectBTN.disabled = false;
                 instanceSelectBTN.classList.remove('disabled');
                 infoStarting.innerHTML = `Verificando...`
-                console.log(err);
                 this.notification()
                 
                 this.enablePlayButton();
@@ -893,8 +954,6 @@ class Home {
         });
         
         if (options.cleaning && options.cleaning.enabled && cleanupManager.enabled) {
-            console.log(`Setting up cleanup for instance '${options.name}' with ${options.cleaning.files.length} files`);
-            
             await cleanupManager.queueCleanup(options.name, opt.path, options.cleaning.files, false);
             
             let gameStartMonitoringStarted = false;
@@ -907,7 +966,6 @@ class Home {
                 
                 if (lastGameState === "initializing" && cleanupManager.isGameFullyStarted(options.name)) {
                     lastGameState = "started";
-                    console.log(`Minecraft for instance '${options.name}' has fully loaded and reached the main menu.`);
                 }
                 
                 if (!gameStartMonitoringStarted) {
@@ -915,6 +973,66 @@ class Home {
                 }
             });
         }
+    }
+
+    async applyOptionalMods(instanceName) {
+        console.log(`Aplicando mods opcionales para instancia: ${instanceName}`);
+        
+        const instances = await config.getInstanceList();
+        const instance = instances.find(i => i.name === instanceName);
+        
+        if (!instance || !instance.optionalMods || instance.optionalMods.length === 0) {
+            console.log(`No hay mods opcionales para la instancia: ${instanceName}`);
+            return;
+        }
+        
+        const db = new database();
+        let configClient = await db.readData('configClient');
+        
+        const activeModsForInstance = configClient.mods_enabled.filter(modId => {
+            const [modIdInstanceName] = modId.split('-');
+            return modIdInstanceName === instanceName;
+        }).map(modId => {
+            const [, modIdModName] = modId.split('-');
+            return modIdModName;
+        });
+        
+        let res = await config.GetConfig();
+        const appdataPath = await appdata();
+        const instanceModsPath = path.join(
+            appdataPath,
+            process.platform == 'darwin' ? res.dataDirectory : `.${res.dataDirectory}`,
+            'instances',
+            instanceName,
+            'mods'
+        );
+        
+        for (const mod of instance.optionalMods) {
+            const modIsActiveInConfig = activeModsForInstance.includes(mod.name);
+            const modFile = mod.file;
+            
+            const activeModPath = path.join(instanceModsPath, `${modFile}.jar`);
+            const disabledModPath = path.join(instanceModsPath, `${modFile}.disabled`);
+
+            if (!fs.existsSync(activeModPath) && !fs.existsSync(disabledModPath)) {
+                console.warn(`No se ha encontrado el mod opcional: ${modFile}`);
+                continue;
+            }
+
+            try {
+                if (modIsActiveInConfig && fs.existsSync(disabledModPath)) {
+                    console.log(`Activando mod: ${modFile}`);
+                    fs.renameSync(disabledModPath, activeModPath);
+                } else if (!modIsActiveInConfig && fs.existsSync(activeModPath)) {
+                    console.log(`Desactivando mod: ${modFile}`);
+                    fs.renameSync(activeModPath, disabledModPath);
+                }
+            } catch (error) {
+                console.error(`Error al procesar el mod ${modFile}:`, error);
+            }
+        }
+        
+        return true;
     }
 
     async checkQueueStatus(hwid, username) {
@@ -956,7 +1074,6 @@ class Home {
                     }
                     
                     const data = await response.json();
-                    console.log(data.message);
                     
                     if (data.status === 'open') {
                         if (document.querySelector('.info-starting-game').contains(cancelButton)) {
@@ -975,8 +1092,6 @@ class Home {
                         throw new Error(`Estado de cola desconocido: ${data.status}`);
                     }
                 } catch (error) {
-                    console.error('Error checking queue status:', error);
-                    
                     if (document.querySelector('.info-starting-game').contains(cancelButton)) {
                         document.querySelector('.info-starting-game').removeChild(cancelButton);
                     }
@@ -990,27 +1105,51 @@ class Home {
     }
 
     async loadRecentInstances() {
-        let configClient = await this.db.readData('configClient');
-        let recentInstances = configClient.recent_instances || [];
-        let recentInstancesContainer = document.querySelector('.recent-instances');
+        try {
+            const configClient = await this.db.readData('configClient');
+            const recentInstances = configClient.recent_instances || [];
+            const recentInstancesContainer = document.querySelector('.recent-instances');
+            const instancesList = await config.getInstanceList();
+            
+            recentInstancesContainer.innerHTML = '';
+            
+            if (!recentInstances.length || !instancesList || instancesList.length === 0) {
+                return;
+            }
 
-        recentInstancesContainer.innerHTML = '';
-
-        for (let instanceName of recentInstances) {
-            let instance = await config.getInstanceList().then(instances => instances.find(i => i.name === instanceName));
-            if (instance) {
-                let button = document.createElement('div');
+            const validInstances = recentInstances.filter(name => 
+                instancesList.some(instance => instance.name === name)
+            );
+            
+            if (validInstances.length !== recentInstances.length) {
+                configClient.recent_instances = validInstances;
+                await this.db.updateData('configClient', configClient);
+            }
+            
+            const username = await getUsername();
+            
+            for (const instanceName of validInstances) {
+                const instance = instancesList.find(i => i.name === instanceName);
+                
+                if (!instance) continue;
+                
+                const button = document.createElement('div');
                 button.classList.add('recent-instance-button');
                 button.style.backgroundImage = `url(${instance.icon || instance.thumbnail || 'assets/images/default/placeholder.jpg'})`;
                 button.dataset.instanceName = instanceName;
+                
                 if (instanceName === configClient.instance_selct) {
                     button.classList.add('selected-instance');
                 }
-                button.addEventListener('click', async (e) => {
-                    let username = await getUsername();
-                    instance = await config.getInstanceList().then(instances => instances.find(i => i.name === instanceName));
-                    if (instance.whitelistActive && !instance.whitelist.includes(username)) {
-                        let popupError = new popup();
+                
+                button.addEventListener('click', async () => {
+                    const refreshedInstances = await config.getInstanceList();
+                    const refreshedInstance = refreshedInstances.find(i => i.name === instanceName);
+                    const currentUsername = await getUsername();
+                    
+                    if (refreshedInstance && refreshedInstance.whitelistActive && 
+                        (!refreshedInstance.whitelist || !refreshedInstance.whitelist.includes(currentUsername))) {
+                        const popupError = new popup();
                         popupError.openPopup({
                             title: 'Error',
                             content: 'No tienes permiso para seleccionar esta instancia.',
@@ -1021,73 +1160,202 @@ class Home {
                         await this.selectInstance(instanceName);
                     }
                 });
+                
+                this.addTooltipToElement(button, instanceName);
+                
+                recentInstancesContainer.appendChild(button);
+            }
+        } catch (error) {
+            console.error('Error al cargar instancias recientes:', error);
+        }
+    }
 
-                button.addEventListener('mouseenter', (e) => {
-                    let tooltip = document.createElement('div');
-                    tooltip.classList.add('tooltip');
-                    tooltip.innerHTML = instanceName;
-                    document.body.appendChild(tooltip);
-                    let rect = button.getBoundingClientRect();
-                    tooltip.style.left = `${rect.right + window.scrollX + 10}px`;
-                    tooltip.style.top = `${rect.top + window.scrollY + rect.height / 2 - tooltip.offsetHeight / 2}px`;
-                    button.tooltip = tooltip;
-                    requestAnimationFrame(() => {
-                        tooltip.style.opacity = '1';
-                    });
+    addTooltipToElement(element, text) {
+        if (!window.tooltipManager) {
+            this.initializeTooltipManager();
+        }
+        
+        element.addEventListener('mouseenter', (e) => {
+            window.tooltipManager.showTooltip(element, text);
+        });
+
+        element.addEventListener('mouseleave', (e) => {
+            window.tooltipManager.hideTooltip(element);
+        });
+        
+        const observer = new MutationObserver((mutations) => {
+            for (const mutation of mutations) {
+                if (mutation.type === 'childList' && 
+                    Array.from(mutation.removedNodes).some(node => 
+                        node === element || (node.contains && node.contains(element))
+                    )) {
+                    window.tooltipManager.hideTooltip(element);
+                    observer.disconnect();
+                }
+            }
+        });
+        
+        if (element.parentNode) {
+            observer.observe(element.parentNode, { childList: true, subtree: true });
+        }
+    }
+
+    addPlayerTooltip() {
+        const playerOptions = document.querySelector('.player-options');
+        
+        if (!window.tooltipManager) {
+            this.initializeTooltipManager();
+        }
+        
+        if (playerOptions) {
+            let tooltipActive = false;
+            
+            playerOptions.addEventListener('mouseenter', async (e) => {
+                if (tooltipActive) return;
+                tooltipActive = true;
+                
+                try {
+                    const username = await getUsername();
+                    if (username) {
+                        window.tooltipManager.showTooltip(playerOptions, username);
+                    }
+                } catch (error) {
+                    console.error('Error al obtener el nombre de usuario:', error);
+                }
+            });
+            
+            playerOptions.addEventListener('mouseleave', (e) => {
+                tooltipActive = false;
+                window.tooltipManager.hideTooltip(playerOptions);
+            });
+            
+            playerOptions.style.pointerEvents = 'auto';
+        }
+    }
+
+    initializeTooltipManager() {
+        if (window.tooltipManager) return;
+
+        window.tooltipManager = {
+            activeTooltips: new Map(),
+            
+            showTooltip(element, text) {
+                this.hideTooltip(element);
+                
+                const tooltip = document.createElement('div');
+                tooltip.classList.add('tooltip');
+                tooltip.innerHTML = text;
+                document.body.appendChild(tooltip);
+                
+                const rect = element.getBoundingClientRect();
+                tooltip.style.left = `${rect.right + window.scrollX + 10}px`;
+                tooltip.style.top = `${rect.top + window.scrollY + rect.height / 2 - tooltip.offsetHeight / 2}px`;
+                
+                tooltip.style.zIndex = '10000';
+                
+                this.activeTooltips.set(element, tooltip);
+                
+                tooltip.style.opacity = '1';
+            },
+            
+            hideTooltip(element) {
+                const tooltip = this.activeTooltips.get(element);
+                if (tooltip) {
+                    tooltip.style.opacity = '0';
+                    this.activeTooltips.delete(element);
+                    
+                    setTimeout(() => {
+                        if (document.body.contains(tooltip)) {
+                            document.body.removeChild(tooltip);
+                        }
+                    }, 200);
+                }
+            },
+            
+            hideAllTooltips() {
+                this.activeTooltips.forEach((tooltip, element) => {
+                    this.hideTooltip(element);
                 });
-
-                button.addEventListener('mouseleave', (e) => {
-                    if (button.tooltip) {
-                        button.tooltip.style.opacity = '0';
-                        setTimeout(() => {
-                            if (button.tooltip) {
-                                document.body.removeChild(button.tooltip);
-                                button.tooltip = null;
-                            }
-                        }, 200);
+            },
+            
+            cleanupOrphanedTooltips() {
+                document.querySelectorAll('.tooltip').forEach(tooltip => {
+                    if (!Array.from(this.activeTooltips.values()).includes(tooltip)) {
+                        if (document.body.contains(tooltip)) {
+                            document.body.removeChild(tooltip);
+                        }
                     }
                 });
-
-                recentInstancesContainer.appendChild(button);
-            } else {
-                recentInstances = recentInstances.filter(name => name !== instanceName);
-                configClient.recent_instances = recentInstances;
-                await this.db.updateData('configClient', configClient);
             }
-        }
+        };
+        
+        document.addEventListener('mouseleave', () => {
+            window.tooltipManager.hideAllTooltips();
+        });
+        
+        window.addEventListener('blur', () => {
+            window.tooltipManager.hideAllTooltips();
+        });
+        
+        setInterval(() => {
+            window.tooltipManager.cleanupOrphanedTooltips();
+        }, 5000);
+        
+        document.addEventListener('click', () => {
+            window.tooltipManager.hideAllTooltips();
+        });
+        
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'hidden') {
+                window.tooltipManager.hideAllTooltips();
+            }
+        });
     }
 
     async selectInstance(instanceName) {
         let selectInstanceBTN = document.querySelector('.instance-select');
         if (selectInstanceBTN.disabled) return;
-        let configClient = await this.db.readData('configClient');
-        configClient.instance_selct = instanceName;
-        await this.db.updateData('configClient', configClient);
-        let instance = await config.getInstanceList().then(instances => instances.find(i => i.name === instanceName));
-        this.notification();
-        setStatus(instance);
-        // Check if performance mode is enabled to avoid animation
-        const performanceMode = isPerformanceModeEnabled();
-        if (performanceMode) {
-            setBackgroundMusic(instance.backgroundMusic);
-            // For performance mode, directly set instance background without transitions
-            if (instance.background && instance.background.match(/^(http|https):\/\/[^ "]+$/)) {
-                // Store the background URL as a data attribute for reference
-                document.querySelector('.server-status-icon')?.setAttribute('data-background', instance.background);
-            } else {
-                document.querySelector('.server-status-icon')?.removeAttribute('data-background');
+        
+        try {
+            let configClient = await this.db.readData('configClient');
+            const oldInstance = configClient.instance_selct;
+            configClient.instance_selct = instanceName;
+            await this.db.updateData('configClient', configClient);
+            
+            let instance = await config.getInstanceList().then(instances => 
+                instances.find(i => i.name === instanceName)
+            );
+            
+            if (!instance) {
+                return;
             }
-        } else {
-            // Normal mode with transitions
-            setBackgroundMusic(instance.backgroundMusic);
-            setInstanceBackground(instance.background);
+            
+            this.notification();
+            setStatus(instance);
+            
+            const performanceMode = isPerformanceModeEnabled();
+            if (performanceMode) {
+                setBackgroundMusic(instance.backgroundMusic);
+                if (instance.background && instance.background.match(/^(http|https):\/\/[^ "]+$/)) {
+                    document.querySelector('.server-status-icon')?.setAttribute('data-background', instance.background);
+                } else {
+                    document.querySelector('.server-status-icon')?.removeAttribute('data-background');
+                }
+            } else {
+                setBackgroundMusic(instance.backgroundMusic);
+                setInstanceBackground(instance.background);
+            }
+            
+            this.updateSelectedInstanceStyle(instanceName);
+        } catch (error) {
+            console.error('Error al seleccionar instancia:', error);
         }
-        this.updateSelectedInstanceStyle(instanceName);
     }
 
     updateSelectedInstanceStyle(instanceName) {
-        let recentInstancesContainer = document.querySelector('.recent-instances');
-        let buttons = recentInstancesContainer.querySelectorAll('.recent-instance-button');
+        const recentInstancesContainer = document.querySelector('.recent-instances');
+        const buttons = recentInstancesContainer.querySelectorAll('.recent-instance-button');
+        
         buttons.forEach(button => {
             if (button.dataset.instanceName === instanceName) {
                 button.classList.add('selected-instance');
@@ -1167,43 +1435,6 @@ class Home {
         });
     }
 
-    addPlayerTooltip() {
-        const playerOptions = document.querySelector('.player-options');
-        const playerHead = document.querySelector('.player-head');
-
-        const showTooltip = async (element) => {
-            const username = await getUsername();
-            let tooltip = document.createElement('div');
-            tooltip.classList.add('tooltip');
-            tooltip.innerHTML = username;
-            document.body.appendChild(tooltip);
-            let rect = element.getBoundingClientRect();
-            tooltip.style.left = `${rect.right + window.scrollX + 10}px`;
-            tooltip.style.top = `${rect.top + window.scrollY + rect.height / 2 - tooltip.offsetHeight / 2}px`;
-            element.tooltip = tooltip;
-            requestAnimationFrame(() => {
-                tooltip.style.opacity = '1';
-            });
-        };
-
-        const hideTooltip = (element) => {
-            if (element.tooltip) {
-                element.tooltip.style.opacity = '0';
-                setTimeout(() => {
-                    if (element.tooltip) {
-                        document.body.removeChild(element.tooltip);
-                        element.tooltip = null;
-                    }
-                }, 200);
-            }
-        };
-
-        playerOptions.addEventListener('mouseenter', () => showTooltip(playerOptions));
-        playerOptions.addEventListener('mouseleave', () => hideTooltip(playerOptions));
-        playerHead.addEventListener('mouseenter', () => showTooltip(playerHead));
-        playerHead.addEventListener('mouseleave', () => hideTooltip(playerHead));
-    }
-    
     async runCleanupBatchFiles() {
         try {
             const fs = require('fs');
@@ -1215,32 +1446,90 @@ class Home {
             const instancesDir = path.join(appDir, process.platform === 'darwin' ? this.config.dataDirectory : `.${this.config.dataDirectory}`, 'instances');
             
             if (!fs.existsSync(instancesDir)) {
-                console.log("Instances directory doesn't exist yet, skipping cleanup batch scan");
                 return;
             }
             
             const batchFiles = glob.sync(path.join(instancesDir, '**', '_cleanup_*.bat'));
             
             if (batchFiles.length > 0) {
-                console.log(`Found ${batchFiles.length} cleanup batch files to run`);
-                
                 for (const batchFile of batchFiles) {
-                    console.log(`Executing cleanup batch file: ${batchFile}`);
                     exec(`"${batchFile}"`, (error, stdout, stderr) => {
                         if (error) {
-                            console.error(`Error executing batch file: ${error.message}`);
                             return;
                         }
                         if (stderr) {
-                            console.error(`Batch file stderr: ${stderr}`);
                             return;
                         }
-                        console.log(`Batch file output: ${stdout}`);
                     });
                 }
             }
         } catch (error) {
             console.error('Error running cleanup batch files:', error);
+        }
+    }
+
+    addInterfaceTooltips() {
+        if (!window.tooltipManager) {
+            this.initializeTooltipManager();
+        }
+        
+        const addInstanceButton = document.querySelector('.add-instance');
+        if (addInstanceButton) {
+            this.addTooltipToElement(addInstanceButton, "Añadir instancia");
+        }
+        
+        const instanceSelectButton = document.querySelector('.instance-select');
+        if (instanceSelectButton) {
+            this.addTooltipToElement(instanceSelectButton, "Seleccionar instancia");
+        }
+        
+        const musicButton = document.querySelector('.music-btn');
+        if (musicButton) {
+            this.addDynamicTooltipToElement(musicButton, () => 
+                musicButton.classList.contains('icon-speaker-on') ? 
+                    "Silenciar música" : "Activar música"
+            );
+        }
+        
+        const modsButton = document.querySelector('.mods-btn');
+        if (modsButton) {
+            this.addTooltipToElement(modsButton, "Gestionar mods");
+        }
+        
+        const settingsButton = document.querySelector('.settings-btn');
+        if (settingsButton) {
+            this.addTooltipToElement(settingsButton, "Configuración");
+        }
+    }
+
+    addDynamicTooltipToElement(element, textCallback) {
+        if (!window.tooltipManager) {
+            this.initializeTooltipManager();
+        }
+        
+        element.addEventListener('mouseenter', (e) => {
+            const text = typeof textCallback === 'function' ? textCallback() : textCallback;
+            window.tooltipManager.showTooltip(element, text);
+        });
+
+        element.addEventListener('mouseleave', (e) => {
+            window.tooltipManager.hideTooltip(element);
+        });
+        
+        const observer = new MutationObserver((mutations) => {
+            for (const mutation of mutations) {
+                if (mutation.type === 'childList' && 
+                    Array.from(mutation.removedNodes).some(node => 
+                        node === element || (node.contains && node.contains(element))
+                    )) {
+                    window.tooltipManager.hideTooltip(element);
+                    observer.disconnect();
+                }
+            }
+        });
+        
+        if (element.parentNode) {
+            observer.observe(element.parentNode, { childList: true, subtree: true });
         }
     }
 }

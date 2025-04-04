@@ -1,9 +1,9 @@
 {
     "name": "Nebula-Community-Launcher",
     "preductname": "Nebula Community Launcher",
-    "version": "1.0.7",
+    "version": "1.0.8",
     "sub_version": "",
-    "changelog": "Si encuentras errores. Pulsa la tecla F12 y en la consola el icono de exclamación para enviar un reporte.",
+    "changelog": "Se ha corregido errores al parchear el launcher.",
     "description": "Launcher de minecraft para los servidores de Nebula Community",
     "main": "src/app.js",
     "author": {
@@ -36,7 +36,7 @@
         "express": "^4.19.2",
         "html2canvas": "^1.4.1",
         "marked": "^14.1.2",
-        "minecraft-java-core": "^4.0.0-alpha.1",
+        "minecraft-java-core": "^4.0.0",
         "node-bdd": "^2.0.4",
         "node-fetch": "^2.7.0",
         "node-machine-id": "^1.0.0",
